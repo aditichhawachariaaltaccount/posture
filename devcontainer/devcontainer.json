@@ -1,0 +1,42 @@
+{
+  "name": "Expo React Native",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:18",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "forwardPorts": [8081, 19000, 19001, 19002, 19006],
+  "portsAttributes": {
+    "8081": {
+      "label": "Metro",
+      "onAutoForward": "notify"
+    },
+    "19000": {
+      "label": "Expo Dev Server",
+      "onAutoForward": "notify"
+    },
+    "19001": {
+      "label": "Expo Dev Server (Secure)",
+      "onAutoForward": "notify"
+    },
+    "19002": {
+      "label": "Expo Dev Server (LAN)",
+      "onAutoForward": "notify"
+    },
+    "19006": {
+      "label": "Expo Web",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.vscode-typescript-next",
+        "bradlc.vscode-tailwindcss",
+        "expo.vscode-expo-tools",
+        "ms-vscode.vscode-json"
+      ]
+    }
+  },
+  "postCreateCommand": "npm install -g @expo/cli && npm install",
+  "remoteUser": "node"
+}
