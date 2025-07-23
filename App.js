@@ -33,8 +33,12 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions();
   const [countdown, setCountdown] = useState(null);
+  const [isAutoMode, setIsAutoMode] = useState(false);
+  const [nextCaptureTime, setNextCaptureTime] = useState(null);
 
   const cameraRef = useRef(null);
+  const autoIntervalRef = useRef(null);
+  const countdownIntervalRef = useRef(null);
 
   const toggleOption = (optionId) => {
     setSelectedOptions(prev => (
@@ -59,34 +63,83 @@ export default function App() {
   };
 
   const goBack = () => {
+    // Clear any running intervals
+    if (autoIntervalRef.current) {
+      clearInterval(autoIntervalRef.current);
+      autoIntervalRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    
     setCurrentView('selection');
     setCapturedPhotos([]);
     setIsCapturing(false);
     setCountdown(null);
+    setIsAutoMode(false);
+    setNextCaptureTime(null);
   };
 
   const toggleCameraFacing = () => {
     setCameraFacing(current => (current === 'back' ? 'front' : 'back'));
   };
 
-  // Auto-capture functionality
+  // Auto-capture functionality (no countdown, instant capture)
   const startAutoCapture = () => {
     if (isCapturing) return;
+    takePicture();
+  };
+
+  // Start recurring auto-capture mode
+  const startRecurringCapture = () => {
+    if (isAutoMode) {
+      // Stop auto mode
+      if (autoIntervalRef.current) {
+        clearInterval(autoIntervalRef.current);
+        autoIntervalRef.current = null;
+      }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      setIsAutoMode(false);
+      setNextCaptureTime(null);
+      setCountdown(null);
+      return;
+    }
+
+    // Start auto mode with countdown first (no immediate photo)
+    setIsAutoMode(true);
     
-    setIsCapturing(true);
-    setCountdown(3);
+    // Start 59-second countdown before first photo
+    let secondsRemaining = 59;
+    setCountdown(secondsRemaining);
     
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          takePicture();
-          return null;
-        }
-        return prev - 1;
-      });
+    countdownIntervalRef.current = setInterval(() => {
+      secondsRemaining--;
+      setCountdown(secondsRemaining);
+      
+      if (secondsRemaining <= 0) {
+        // Take photo and reset countdown
+        startAutoCapture();
+        secondsRemaining = 59;
+        setCountdown(secondsRemaining);
+      }
     }, 1000);
   };
+
+  // Clean up intervals on component unmount
+  useEffect(() => {
+    return () => {
+      if (autoIntervalRef.current) {
+        clearInterval(autoIntervalRef.current);
+      }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+    };
+  }, []);
 
   const takePicture = async () => {
     if (!cameraRef.current) return;
@@ -260,43 +313,120 @@ export default function App() {
       <View style={styles.cameraContainer}>
         <CameraView ref={cameraRef} style={styles.camera} facing={cameraFacing} />
         
-        {/* Countdown overlay */}
-        {countdown && (
+        {/* 59-second countdown overlay */}
+        {isAutoMode && countdown !== null && (
           <View style={styles.countdownOverlay}>
             <Text style={styles.countdownText}>{countdown}</Text>
+            <Text style={styles.countdownLabel}>seconds until next photo</Text>
           </View>
         )}
         
         <View style={styles.topCameraControls}>
-          <TouchableOpacity style={styles.backButton} onPress={goBack}>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={goBack}
+            activeOpacity={0.7}
+          >
             <Text style={styles.backButtonText}>← Back</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.reverseButton} onPress={toggleCameraFacing}>
+          <TouchableOpacity 
+            style={styles.reverseButton} 
+            onPress={toggleCameraFacing}
+            activeOpacity={0.7}
+          >
             <Text style={styles.reverseButtonText}>🔄</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.cameraControls}>
-          <TouchableOpacity
-            style={[
-              styles.captureButton,
-              isCapturing && styles.capturingButton,
-              isProcessing && styles.processingButton
-            ]}
-            onPress={startAutoCapture}
-            disabled={isCapturing || isProcessing}
-          >
-            <Text style={styles.captureButtonText}>
-              {isProcessing ? 'Processing...' : 
-               isCapturing ? `Get Ready! ${countdown || ''}` : 
-               'Take Selfie (3s)'}
-            </Text>
-          </TouchableOpacity>
+        {/* Always show info box */}
+        <View style={styles.resultContainer}>
+          {isProcessing ? (
+            <>
+              <Text style={styles.resultText}>📸 Processing photo...</Text>
+              <Text style={styles.resultText}>💾 Saving to library...</Text>
+              <Text style={styles.resultText}>⬆️ Uploading to backend...</Text>
+            </>
+          ) : capturedPhotos.length > 0 ? (
+            <>
+              <Text style={styles.resultText}>✅ Photos captured: {capturedPhotos.length}</Text>
+              <Text style={styles.resultText}>📷 Camera: {cameraFacing}</Text>
+              <Text style={styles.resultText}>💾 Storage: Local + Cloud</Text>
+              <Text style={styles.resultText}>🎯 Ready for posture analysis</Text>
+              {isAutoMode && (
+                <Text style={styles.resultText}>🔄 Auto mode: Every 60 seconds</Text>
+              )}
+            </>
+          ) : isAutoMode ? (
+            <>
+              <Text style={styles.resultText}>🔄 Auto mode active</Text>
+              <Text style={styles.resultText}>📷 Camera: {cameraFacing}</Text>
+              <Text style={styles.resultText}>⏱️ Taking photos every 60 seconds</Text>
+              <Text style={styles.resultText}>🎯 Ready for posture analysis</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.resultText}>📷 Camera ready</Text>
+              <Text style={styles.resultText}>📱 Front camera for selfies</Text>
+              <Text style={styles.resultText}>🎯 Tap to capture or start auto mode</Text>
+            </>
+          )}
         </View>
+
+        <View style={styles.cameraControls}>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[
+                styles.captureButton,
+                isProcessing && styles.processingButton
+              ]}
+              onPress={startAutoCapture}
+              disabled={isAutoMode}
+              activeOpacity={isAutoMode ? 1 : 0.7}
+            >
+              <Text style={styles.captureButtonText}>
+                {isProcessing ? 'Processing...' : 'Take Selfie'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.autoButton,
+                isAutoMode && styles.autoButtonActive
+              ]}
+              onPress={startRecurringCapture}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.autoButtonText}>
+                {isAutoMode ? 'Stop Auto' : 'Auto Mode'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {isAutoMode && countdown !== null && (
+            <Text style={styles.nextCaptureText}>
+              Next photo in: {countdown} seconds
+            </Text>
+          )}
+        </View>
+
+        {isAutoMode && (
+          <View style={styles.autoModeIndicator}>
+            <Text style={styles.autoModeText}>🔄 AUTO MODE ACTIVE</Text>
+            <Text style={styles.autoModeSubtext}>Taking photos every 60 seconds</Text>
+          </View>
+        )}
 
         {capturedPhotos.length > 0 && !isProcessing && (
           <View style={styles.photosOverlay}>
             {renderPhotosGrid()}
+          </View>
+        )}
+
+        {isProcessing && (
+          <View style={styles.resultContainer}>
+            <Text style={styles.resultText}>📸 Processing photo...</Text>
+            <Text style={styles.resultText}>💾 Saving to library...</Text>
+            <Text style={styles.resultText}>⬆️ Uploading to backend...</Text>
           </View>
         )}
 
@@ -314,6 +444,9 @@ export default function App() {
             <Text style={styles.resultText}>📷 Camera: {cameraFacing}</Text>
             <Text style={styles.resultText}>💾 Storage: Local + Cloud</Text>
             <Text style={styles.resultText}>🎯 Ready for posture analysis</Text>
+            {isAutoMode && (
+              <Text style={styles.resultText}>🔄 Auto mode: Every 60 seconds</Text>
+            )}
           </View>
         )}
       </View>
@@ -439,16 +572,25 @@ const styles = StyleSheet.create({
   cameraContainer: { flex: 1, justifyContent: 'center' },
   camera: { flex: 1 },
   countdownOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', zIndex: 2 },
-  countdownText: { fontSize: 120, fontWeight: 'bold', color: 'white', textShadowColor: 'rgba(0, 0, 0, 0.75)', textShadowOffset: {width: -2, height: 2}, textShadowRadius: 10 },
-  topCameraControls: { position: 'absolute', top: 50, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 1 },
+  countdownText: { fontSize: 80, fontWeight: 'bold', color: 'white', textShadowColor: 'rgba(0, 0, 0, 0.75)', textShadowOffset: {width: -2, height: 2}, textShadowRadius: 10 },
+  countdownLabel: { fontSize: 16, color: 'white', textAlign: 'center', marginTop: 10, textShadowColor: 'rgba(0, 0, 0, 0.75)', textShadowOffset: {width: -1, height: 1}, textShadowRadius: 5 },
+  topCameraControls: { position: 'absolute', top: 50, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 10 },
   reverseButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 12, borderRadius: 25, alignItems: 'center', justifyContent: 'center', minWidth: 50, minHeight: 50 },
   reverseButtonText: { fontSize: 20, textAlign: 'center' },
-  cameraControls: { position: 'absolute', bottom: 50, left: 0, right: 0, alignItems: 'center' },
-  captureButton: { backgroundColor: '#FF3B30', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 25, minWidth: 150, alignItems: 'center' },
+  cameraControls: { position: 'absolute', bottom: 50, left: 0, right: 0, alignItems: 'center', zIndex: 10 },
+  buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 15 },
+  captureButton: { backgroundColor: '#FF3B30', paddingHorizontal: 25, paddingVertical: 15, borderRadius: 25, minWidth: 130, alignItems: 'center' },
   capturingButton: { backgroundColor: '#FF9500' },
   processingButton: { backgroundColor: '#007AFF' },
-  captureButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
-  resultContainer: { position: 'absolute', top: 120, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 15, borderRadius: 8, zIndex: 1 },
+  captureButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  autoButton: { backgroundColor: '#34C759', paddingHorizontal: 20, paddingVertical: 15, borderRadius: 25, minWidth: 100, alignItems: 'center' },
+  autoButtonActive: { backgroundColor: '#FF9500' },
+  autoButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  nextCaptureText: { color: 'white', fontSize: 12, textAlign: 'center', marginTop: 8, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
+  autoModeIndicator: { position: 'absolute', top: 200, left: 20, right: 20, backgroundColor: 'rgba(52, 199, 89, 0.9)', padding: 12, borderRadius: 8, alignItems: 'center', zIndex: 1 },
+  autoModeText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  autoModeSubtext: { color: 'white', fontSize: 12, marginTop: 2 },
+  resultContainer: { position: 'absolute', top: 120, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 15, borderRadius: 8, zIndex: 5 },
   resultText: { color: 'white', fontSize: 14, textAlign: 'center', marginVertical: 2 },
   errorText: { fontSize: 16, color: '#FF3B30', textAlign: 'center', marginBottom: 20 },
   actionButton: { backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, marginTop: 15 },
