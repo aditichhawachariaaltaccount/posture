@@ -13,9 +13,7 @@ import {
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Video } from 'expo-av';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import * as VideoThumbnails from 'expo-video-thumbnails'; // ✅ NEW
 
 const SENSING_OPTIONS = [
   { id: 'camera', name: 'Camera', icon: '📹', available: true },
@@ -29,14 +27,12 @@ export default function App() {
   const [selectedOptions, setSelectedOptions] = useState([]);
   const [currentView, setCurrentView] = useState('selection');
   const [permission, requestPermission] = useCameraPermissions();
-  const [isRecording, setIsRecording] = useState(false);
-  const [videoUri, setVideoUri] = useState(null);
-  const [frames, setFrames] = useState([]);
-  const [cameraFacing, setCameraFacing] = useState('back');
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [capturedPhotos, setCapturedPhotos] = useState([]);
+  const [cameraFacing, setCameraFacing] = useState('front'); // Changed to front for selfie
   const [isProcessing, setIsProcessing] = useState(false);
   const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions();
-  const [savedVideoAsset, setSavedVideoAsset] = useState(null);
-  const [extractionProgress, setExtractionProgress] = useState(0);
+  const [countdown, setCountdown] = useState(null);
 
   const cameraRef = useRef(null);
 
@@ -64,184 +60,168 @@ export default function App() {
 
   const goBack = () => {
     setCurrentView('selection');
-    setVideoUri(null);
-    setFrames([]);
-    setIsRecording(false);
-    setSavedVideoAsset(null);
-    setExtractionProgress(0);
+    setCapturedPhotos([]);
+    setIsCapturing(false);
+    setCountdown(null);
   };
 
   const toggleCameraFacing = () => {
     setCameraFacing(current => (current === 'back' ? 'front' : 'back'));
   };
 
-  const startRecording = async () => {
-    if (!cameraRef.current) return;
-    try {
-      setIsRecording(true);
-      setVideoUri(null);
-      setFrames([]);
-      setSavedVideoAsset(null);
-      setExtractionProgress(0);
-      const video = await cameraRef.current.recordAsync({
-        quality: '720p',
-        maxDuration: 30,
+  // Auto-capture functionality
+  const startAutoCapture = () => {
+    if (isCapturing) return;
+    
+    setIsCapturing(true);
+    setCountdown(3);
+    
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          takePicture();
+          return null;
+        }
+        return prev - 1;
       });
-      setVideoUri(video.uri);
-      await processVideo(video.uri);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to start recording');
-      setIsRecording(false);
-    }
+    }, 1000);
   };
 
-  const stopRecording = async () => {
+  const takePicture = async () => {
     if (!cameraRef.current) return;
+    
     try {
-      cameraRef.current.stopRecording();
-      setIsRecording(false);
-    } catch {
-      Alert.alert('Error', 'Failed to stop recording');
+      setIsProcessing(true);
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.8,
+        base64: false,
+        exif: false,
+      });
+      
+      await processPhoto(photo.uri);
+      
+    } catch (error) {
+      console.error('Error taking picture:', error);
+      Alert.alert('Error', 'Failed to take picture');
+    } finally {
+      setIsCapturing(false);
+      setIsProcessing(false);
     }
   };
 
-  const saveVideoToLibrary = async (videoUri) => {
+  const savePhotoToLibrary = async (photoUri) => {
     try {
       if (!mediaPermission?.granted) {
         const permission = await requestMediaPermission();
         if (!permission.granted) {
-          Alert.alert('Permission Required', 'Media library permission is required to save videos');
+          Alert.alert('Permission Required', 'Media library permission is required to save photos');
           return null;
         }
       }
-      const asset = await MediaLibrary.saveToLibraryAsync(videoUri);
-      setSavedVideoAsset(asset);
+      const asset = await MediaLibrary.saveToLibraryAsync(photoUri);
       return asset;
-    } catch {
-      Alert.alert('Error', 'Failed to save video to library');
+    } catch (error) {
+      console.error('Error saving photo:', error);
+      Alert.alert('Error', 'Failed to save photo to library');
       return null;
     }
   };
 
-  const getVideoDuration = async (videoUri) => {
-    return 10; // Simplified/fallback
-  };
+  const processPhoto = async (photoUri) => {
+    try {
+      // Save to library
+      const asset = await savePhotoToLibrary(photoUri);
+      
+      // Create a photo object with metadata
+      const photoData = {
+        id: Date.now(),
+        uri: photoUri,
+        timestamp: new Date().toISOString(),
+        cameraFacing,
+        asset,
+        filename: `selfie_${Date.now()}.jpg`,
+        description: `Selfie taken with ${cameraFacing} camera`
+      };
 
-  // ✅ REAL FRAME EXTRACTION
-  const extractFramesLocally = async (videoUri) => {
-    const frames = [];
-    const frameCount = 10;
-    const videoDuration = await getVideoDuration(videoUri);
-    const interval = videoDuration / frameCount;
-    const frameDir = `${FileSystem.documentDirectory}frames/`;
-    await FileSystem.makeDirectoryAsync(frameDir, { intermediates: true });
+      // Add to captured photos
+      setCapturedPhotos(prev => [...prev, photoData]);
 
-    for (let i = 0; i < frameCount; i++) {
-      const timestampMs = i * interval * 1000;
-      const frameFileName = `frame_${i+1}_${Date.now()}.jpg`;
-      const frameUri = `${frameDir}${frameFileName}`;
+      // Save metadata
+      await savePhotoMetadata(photoData);
+
+      // Upload to backend (optional)
       try {
-        const { uri: thumbnailUri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
-          time: timestampMs,
-        });
-        await FileSystem.copyAsync({ from: thumbnailUri, to: frameUri });
-        frames.push({
-          id: i + 1,
-          timestamp: timestampMs / 1000,
-          uri: frameUri,
-          localPath: frameUri,
-          filename: frameFileName,
-          description: `Frame ${i + 1} at ${(timestampMs / 1000).toFixed(2)}s`,
-          size: { width: 720, height: 1280 },
-        });
-        setExtractionProgress(i + 1);
-        await new Promise(res => setTimeout(res, 150));
-      } catch (e) {
-        console.error(`Error extracting frame ${i+1}:`, e);
+        await uploadPhotoToBackend(photoData);
+        Alert.alert('Success!', 'Photo captured and uploaded successfully!');
+      } catch (error) {
+        Alert.alert('Partial Success', 'Photo saved locally but upload failed');
       }
+
+    } catch (error) {
+      console.error('Error processing photo:', error);
+      Alert.alert('Error', 'Failed to process photo');
     }
-    return frames;
   };
 
-  const saveFramesToStorage = async (frames) => {
-    const framesData = {
-      extractedAt: new Date().toISOString(),
-      totalFrames: frames.length,
-      cameraFacing,
-      frames: frames.map(f => ({
-        id: f.id,
-        timestamp: f.timestamp,
-        filename: f.filename,
-        localPath: f.localPath,
-        description: f.description,
-        size: f.size
-      }))
-    };
-    const metaPath = `${FileSystem.documentDirectory}frames_metadata.json`;
-    await FileSystem.writeAsStringAsync(metaPath, JSON.stringify(framesData, null, 2));
-    return metaPath;
+  const savePhotoMetadata = async (photoData) => {
+    try {
+      const metadataDir = `${FileSystem.documentDirectory}photos/`;
+      await FileSystem.makeDirectoryAsync(metadataDir, { intermediates: true });
+      
+      const metadataPath = `${metadataDir}photo_${photoData.id}_metadata.json`;
+      await FileSystem.writeAsStringAsync(metadataPath, JSON.stringify(photoData, null, 2));
+      
+      return metadataPath;
+    } catch (error) {
+      console.error('Error saving metadata:', error);
+    }
   };
 
-  const uploadVideoToBackend = async (videoUri, frames) => {
+  const uploadPhotoToBackend = async (photoData) => {
     const formData = new FormData();
-    formData.append('video', { uri: videoUri, type: 'video/mp4', name: 'posture_video.mp4' });
-    formData.append('frameCount', frames.length.toString());
-    formData.append('cameraFacing', cameraFacing);
-    formData.append('framesData', JSON.stringify(frames));
-    const resp = await fetch('https://your-backend-api.com/api/process-video', {
+    formData.append('photo', {
+      uri: photoData.uri,
+      type: 'image/jpeg',
+      name: photoData.filename
+    });
+    formData.append('metadata', JSON.stringify({
+      timestamp: photoData.timestamp,
+      cameraFacing: photoData.cameraFacing,
+      description: photoData.description
+    }));
+
+    const response = await fetch('https://your-backend-api.com/api/process-photo', {
       method: 'POST',
       body: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     });
-    if (!resp.ok) throw new Error(`HTTP status ${resp.status}`);
-    return resp.json();
-  };
 
-  const processVideo = async (videoUri) => {
-    setIsProcessing(true);
-    setExtractionProgress(0);
-    try {
-      await saveVideoToLibrary(videoUri);
-      const extractedFrames = await extractFramesLocally(videoUri);
-      await saveFramesToStorage(extractedFrames);
-      setFrames(extractedFrames);
-
-      try {
-        await uploadVideoToBackend(videoUri, extractedFrames);
-        Alert.alert('Success!', `Video processed!\n✅ Saved\n✅ ${extractedFrames.length} frames\n✅ Uploaded`, [{ text: 'OK' }]);
-      } catch {
-        Alert.alert('Partial Success', `Video saved and frames extracted!\n⚠️ Backend upload failed`, [{ text: 'OK' }]);
-      }
-    } catch (err) {
-      console.error(err);
-      const mockFrames = Array.from({ length: 10 }, (_, i) => ({
-        id: i + 1,
-        timestamp: (i + 1) * 0.5,
-        uri: videoUri,
-        localPath: `${FileSystem.documentDirectory}frames/mock_frame_${i+1}.jpg`,
-        filename: `mock_frame_${i+1}.jpg`,
-        description: `Mock frame ${i + 1} at ${((i + 1) * 0.5).toFixed(1)}s`,
-        size: { width: 720, height: 1280 }
-      }));
-      setFrames(mockFrames);
-      Alert.alert('Processing Error', `Using fallback mock frames\n${err.message}`, [{ text: 'OK' }]);
-    } finally {
-      setIsProcessing(false);
-      setExtractionProgress(0);
+    if (!response.ok) {
+      throw new Error(`HTTP status ${response.status}`);
     }
+
+    return response.json();
   };
 
-  const renderFramesGrid = () => {
-    if (frames.length === 0) return null;
+  const renderPhotosGrid = () => {
+    if (capturedPhotos.length === 0) return null;
+    
     return (
-      <ScrollView style={styles.framesContainer} contentContainerStyle={styles.framesContent}>
-        <Text style={styles.framesTitle}>Extracted Frames ({frames.length})</Text>
-        <View style={styles.framesGrid}>
-          {frames.map(frame => (
-            <View key={frame.id} style={styles.frameItem}>
-              <Image source={{ uri: frame.uri }} style={styles.framePlaceholder} />
-              <Text style={styles.frameTimestamp}>{frame.timestamp.toFixed(2)}s</Text>
-              <Text style={styles.frameDescription} numberOfLines={2}>{frame.description}</Text>
+      <ScrollView style={styles.photosContainer} contentContainerStyle={styles.photosContent}>
+        <Text style={styles.photosTitle}>Captured Photos ({capturedPhotos.length})</Text>
+        <View style={styles.photosGrid}>
+          {capturedPhotos.map(photo => (
+            <View key={photo.id} style={styles.photoItem}>
+              <Image source={{ uri: photo.uri }} style={styles.photoThumbnail} />
+              <Text style={styles.photoTimestamp}>
+                {new Date(photo.timestamp).toLocaleTimeString()}
+              </Text>
+              <Text style={styles.photoDescription} numberOfLines={2}>
+                {photo.description}
+              </Text>
             </View>
           ))}
         </View>
@@ -253,60 +233,89 @@ export default function App() {
     if (!permission) {
       return (
         <SafeAreaView style={styles.container}>
-          <View style={styles.centerContainer}><Text>Requesting camera permissions...</Text></View>
+          <View style={styles.centerContainer}>
+            <Text>Requesting camera permissions...</Text>
+          </View>
         </SafeAreaView>
       );
     }
+
     if (!permission.granted) {
       return (
         <SafeAreaView style={styles.container}>
           <View style={styles.centerContainer}>
             <Text style={styles.errorText}>Camera permission not granted</Text>
-            <TouchableOpacity style={styles.actionButton} onPress={requestPermission}><Text style={styles.actionButtonText}>Grant Permission</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={goBack}><Text style={styles.actionButtonText}>Go Back</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={requestPermission}>
+              <Text style={styles.actionButtonText}>Grant Permission</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={goBack}>
+              <Text style={styles.actionButtonText}>Go Back</Text>
+            </TouchableOpacity>
           </View>
         </SafeAreaView>
       );
     }
+
     return (
       <View style={styles.cameraContainer}>
         <CameraView ref={cameraRef} style={styles.camera} facing={cameraFacing} />
+        
+        {/* Countdown overlay */}
+        {countdown && (
+          <View style={styles.countdownOverlay}>
+            <Text style={styles.countdownText}>{countdown}</Text>
+          </View>
+        )}
+        
         <View style={styles.topCameraControls}>
-          <TouchableOpacity style={styles.backButton} onPress={goBack}><Text style={styles.backButtonText}>← Back</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.reverseButton} onPress={toggleCameraFacing}><Text style={styles.reverseButtonText}>🔄</Text></TouchableOpacity>
-        </View>
-        <View style={styles.cameraControls}>
-          <TouchableOpacity
-            style={[styles.recordButton, isRecording && styles.recordingButton, isProcessing && styles.processingButton]}
-            onPress={isRecording ? stopRecording : startRecording}
-            disabled={isProcessing}
-          >
-            <Text style={styles.recordButtonText}>{isProcessing ? 'Processing...' : isRecording ? 'Stop' : 'Record'}</Text>
+          <TouchableOpacity style={styles.backButton} onPress={goBack}>
+            <Text style={styles.backButtonText}>← Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.reverseButton} onPress={toggleCameraFacing}>
+            <Text style={styles.reverseButtonText}>🔄</Text>
           </TouchableOpacity>
         </View>
 
-        {(videoUri || isProcessing) && (
-          <View style={styles.resultContainer}>
-            {isProcessing ? (
-              <>
-                <Text style={styles.resultText}>🎬 Processing video...</Text>
-                <Text style={styles.resultText}>💾 Saving to library...</Text>
-                <Text style={styles.resultText}>✂️ Extracting frames... ({extractionProgress}/10)</Text>
-                <Text style={styles.resultText}>⬆️ Uploading to backend...</Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.resultText}>✅ Video saved successfully!</Text>
-                <Text style={styles.resultText}>📊 Frames extracted: {frames.length}</Text>
-                <Text style={styles.resultText}>📷 Camera: {cameraFacing}</Text>
-                <Text style={styles.resultText}>💾 Storage: Local + Cloud</Text>
-                {frames.length > 0 && <Text style={styles.resultText}>🎯 Ready for posture analysis</Text>}
-              </>
-            )}
+        <View style={styles.cameraControls}>
+          <TouchableOpacity
+            style={[
+              styles.captureButton,
+              isCapturing && styles.capturingButton,
+              isProcessing && styles.processingButton
+            ]}
+            onPress={startAutoCapture}
+            disabled={isCapturing || isProcessing}
+          >
+            <Text style={styles.captureButtonText}>
+              {isProcessing ? 'Processing...' : 
+               isCapturing ? `Get Ready! ${countdown || ''}` : 
+               'Take Selfie (3s)'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {capturedPhotos.length > 0 && !isProcessing && (
+          <View style={styles.photosOverlay}>
+            {renderPhotosGrid()}
           </View>
         )}
 
-        {frames.length > 0 && !isProcessing && <View style={styles.framesOverlay}>{renderFramesGrid()}</View>}
+        {isProcessing && (
+          <View style={styles.resultContainer}>
+            <Text style={styles.resultText}>📸 Processing photo...</Text>
+            <Text style={styles.resultText}>💾 Saving to library...</Text>
+            <Text style={styles.resultText}>⬆️ Uploading to backend...</Text>
+          </View>
+        )}
+
+        {capturedPhotos.length > 0 && !isProcessing && (
+          <View style={styles.resultContainer}>
+            <Text style={styles.resultText}>✅ Photos captured: {capturedPhotos.length}</Text>
+            <Text style={styles.resultText}>📷 Camera: {cameraFacing}</Text>
+            <Text style={styles.resultText}>💾 Storage: Local + Cloud</Text>
+            <Text style={styles.resultText}>🎯 Ready for posture analysis</Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -314,7 +323,9 @@ export default function App() {
   const renderWiFiScreen = () => (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={goBack}><Text style={styles.backButtonText}>← Back</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={goBack}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
         <Text style={styles.title}>WiFi Sensing</Text>
       </View>
       <View style={styles.centerContainer}>
@@ -330,7 +341,9 @@ export default function App() {
   const renderAcousticScreen = () => (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={goBack}><Text style={styles.backButtonText}>← Back</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={goBack}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
         <Text style={styles.title}>Acoustic Sensing</Text>
       </View>
       <View style={styles.centerContainer}>
@@ -425,26 +438,28 @@ const styles = StyleSheet.create({
   placeholderIcon: { fontSize: 64, marginBottom: 20 },
   cameraContainer: { flex: 1, justifyContent: 'center' },
   camera: { flex: 1 },
+  countdownOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', zIndex: 2 },
+  countdownText: { fontSize: 120, fontWeight: 'bold', color: 'white', textShadowColor: 'rgba(0, 0, 0, 0.75)', textShadowOffset: {width: -2, height: 2}, textShadowRadius: 10 },
   topCameraControls: { position: 'absolute', top: 50, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, zIndex: 1 },
   reverseButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 12, borderRadius: 25, alignItems: 'center', justifyContent: 'center', minWidth: 50, minHeight: 50 },
   reverseButtonText: { fontSize: 20, textAlign: 'center' },
   cameraControls: { position: 'absolute', bottom: 50, left: 0, right: 0, alignItems: 'center' },
-  recordButton: { backgroundColor: '#FF3B30', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 25, minWidth: 100, alignItems: 'center' },
-  recordingButton: { backgroundColor: '#007AFF' },
-  processingButton: { backgroundColor: '#FF9500' },
-  recordButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
+  captureButton: { backgroundColor: '#FF3B30', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 25, minWidth: 150, alignItems: 'center' },
+  capturingButton: { backgroundColor: '#FF9500' },
+  processingButton: { backgroundColor: '#007AFF' },
+  captureButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
   resultContainer: { position: 'absolute', top: 120, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 15, borderRadius: 8, zIndex: 1 },
   resultText: { color: 'white', fontSize: 14, textAlign: 'center', marginVertical: 2 },
   errorText: { fontSize: 16, color: '#FF3B30', textAlign: 'center', marginBottom: 20 },
   actionButton: { backgroundColor: '#007AFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, marginTop: 15 },
   actionButtonText: { color: 'white', fontSize: 16, fontWeight: '600' },
-  framesOverlay: { position: 'absolute', bottom: 150, left: 0, right: 0, maxHeight: 200, backgroundColor: 'rgba(0,0,0,0.9)', zIndex: 1 },
-  framesContainer: { maxHeight: 200 },
-  framesContent: { padding: 10 },
-  framesTitle: { color: 'white', fontSize: 16, fontWeight: '600', textAlign: 'center', marginBottom: 10 },
-  framesGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around' },
-  frameItem: { width: screenWidth / 6 - 5, marginBottom: 10, alignItems: 'center' },
-  framePlaceholder: { width: '100%', aspectRatio: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4 },
-  frameTimestamp: { color: '#ccc', fontSize: 6, textAlign: 'center', marginTop: 2 },
-  frameDescription: { color: '#ccc', fontSize: 6, textAlign: 'center', lineHeight: 8 },
+  photosOverlay: { position: 'absolute', bottom: 150, left: 0, right: 0, maxHeight: 200, backgroundColor: 'rgba(0,0,0,0.9)', zIndex: 1 },
+  photosContainer: { maxHeight: 200 },
+  photosContent: { padding: 10 },
+  photosTitle: { color: 'white', fontSize: 16, fontWeight: '600', textAlign: 'center', marginBottom: 10 },
+  photosGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around' },
+  photoItem: { width: screenWidth / 6 - 5, marginBottom: 10, alignItems: 'center' },
+  photoThumbnail: { width: '100%', aspectRatio: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4 },
+  photoTimestamp: { color: '#ccc', fontSize: 6, textAlign: 'center', marginTop: 2 },
+  photoDescription: { color: '#ccc', fontSize: 6, textAlign: 'center', lineHeight: 8 },
 });
