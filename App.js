@@ -35,6 +35,7 @@ export default function App() {
   const [countdown, setCountdown] = useState(null);
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [nextCaptureTime, setNextCaptureTime] = useState(null);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
   const cameraRef = useRef(null);
   const autoIntervalRef = useRef(null);
@@ -79,6 +80,28 @@ export default function App() {
     setCountdown(null);
     setIsAutoMode(false);
     setNextCaptureTime(null);
+    setCurrentPhotoIndex(0);
+  };
+
+  const goToGallery = () => {
+    // Stop auto mode if active
+    if (autoIntervalRef.current) {
+      clearInterval(autoIntervalRef.current);
+      autoIntervalRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    
+    setIsAutoMode(false);
+    setCountdown(null);
+    setCurrentView('gallery');
+    setCurrentPhotoIndex(0);
+  };
+
+  const backToCamera = () => {
+    setCurrentView('camera');
   };
 
   const toggleCameraFacing = () => {
@@ -259,6 +282,148 @@ export default function App() {
     return response.json();
   };
 
+  const deletePhoto = (photoId) => {
+    Alert.alert(
+      'Delete Photo',
+      'Are you sure you want to delete this photo?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setCapturedPhotos(prev => prev.filter(photo => photo.id !== photoId));
+            // Adjust current index if needed
+            if (currentPhotoIndex >= capturedPhotos.length - 1) {
+              setCurrentPhotoIndex(Math.max(0, capturedPhotos.length - 2));
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const renderGalleryScreen = () => {
+    if (capturedPhotos.length === 0) {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backButton} onPress={backToCamera}>
+              <Text style={styles.backButtonText}>← Back to Camera</Text>
+            </TouchableOpacity>
+            <Text style={styles.title}>Photo Gallery</Text>
+          </View>
+          <View style={styles.centerContainer}>
+            <Text style={styles.placeholderIcon}>📷</Text>
+            <Text style={styles.subtitle}>No photos yet</Text>
+            <Text style={styles.description}>
+              Take some selfies to see them here!
+            </Text>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    const currentPhoto = capturedPhotos[currentPhotoIndex];
+    
+    return (
+      <SafeAreaView style={styles.galleryContainer}>
+        <View style={styles.galleryHeader}>
+          <TouchableOpacity style={styles.backButton} onPress={backToCamera}>
+            <Text style={styles.backButtonText}>← Back to Camera</Text>
+          </TouchableOpacity>
+          <Text style={styles.galleryTitle}>
+            Photo {currentPhotoIndex + 1} of {capturedPhotos.length}
+          </Text>
+          <TouchableOpacity 
+            style={styles.deleteButton} 
+            onPress={() => deletePhoto(currentPhoto.id)}
+          >
+            <Text style={styles.deleteButtonText}>🗑️</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.photoContainer}>
+          <Image 
+            source={{ uri: currentPhoto.uri }} 
+            style={styles.fullPhoto}
+            resizeMode="contain"
+          />
+          
+          {/* Navigation arrows */}
+          {capturedPhotos.length > 1 && (
+            <>
+              <TouchableOpacity 
+                style={[styles.navButton, styles.prevButton]} 
+                onPress={prevPhoto}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.navButtonText}>‹</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.navButton, styles.nextButton]} 
+                onPress={nextPhoto}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.navButtonText}>›</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        <View style={styles.photoInfo}>
+          <Text style={styles.photoTimestamp}>
+            📅 {new Date(currentPhoto.timestamp).toLocaleString()}
+          </Text>
+          <Text style={styles.photoDetails}>
+            📷 {currentPhoto.cameraFacing} camera
+          </Text>
+          <Text style={styles.photoDetails}>
+            📁 {currentPhoto.filename}
+          </Text>
+        </View>
+
+        {/* Thumbnail strip */}
+        <ScrollView 
+          horizontal 
+          style={styles.thumbnailStrip}
+          contentContainerStyle={styles.thumbnailContent}
+          showsHorizontalScrollIndicator={false}
+        >
+          {capturedPhotos.map((photo, index) => (
+            <TouchableOpacity
+              key={photo.id}
+              style={[
+                styles.thumbnailButton,
+                index === currentPhotoIndex && styles.activeThumbnail
+              ]}
+              onPress={() => setCurrentPhotoIndex(index)}
+              activeOpacity={0.7}
+            >
+              <Image 
+                source={{ uri: photo.uri }} 
+                style={styles.thumbnailImage}
+              />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  };
+
+  const nextPhoto = () => {
+    setCurrentPhotoIndex(prev => 
+      prev >= capturedPhotos.length - 1 ? 0 : prev + 1
+    );
+  };
+
+  const prevPhoto = () => {
+    setCurrentPhotoIndex(prev => 
+      prev <= 0 ? capturedPhotos.length - 1 : prev - 1
+    );
+  };
+
   const renderPhotosGrid = () => {
     if (capturedPhotos.length === 0) return null;
     
@@ -400,6 +565,18 @@ export default function App() {
                 {isAutoMode ? 'Stop Auto' : 'Auto Mode'}
               </Text>
             </TouchableOpacity>
+
+            {capturedPhotos.length > 0 && (
+              <TouchableOpacity
+                style={styles.galleryButton}
+                onPress={goToGallery}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.galleryButtonText}>
+                  View Photos ({capturedPhotos.length})
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {isAutoMode && countdown !== null && (
@@ -537,6 +714,7 @@ export default function App() {
 
   switch (currentView) {
     case 'camera': return renderCameraScreen();
+    case 'gallery': return renderGalleryScreen();
     case 'wifi': return renderWiFiScreen();
     case 'acoustic': return renderAcousticScreen();
     default: return renderSelectionScreen();
@@ -578,14 +756,16 @@ const styles = StyleSheet.create({
   reverseButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 12, borderRadius: 25, alignItems: 'center', justifyContent: 'center', minWidth: 50, minHeight: 50 },
   reverseButtonText: { fontSize: 20, textAlign: 'center' },
   cameraControls: { position: 'absolute', bottom: 50, left: 0, right: 0, alignItems: 'center', zIndex: 10 },
-  buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 15 },
-  captureButton: { backgroundColor: '#FF3B30', paddingHorizontal: 25, paddingVertical: 15, borderRadius: 25, minWidth: 130, alignItems: 'center' },
+  buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'center' },
+  captureButton: { backgroundColor: '#FF3B30', paddingHorizontal: 20, paddingVertical: 15, borderRadius: 25, minWidth: 110, alignItems: 'center' },
   capturingButton: { backgroundColor: '#FF9500' },
   processingButton: { backgroundColor: '#007AFF' },
-  captureButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
-  autoButton: { backgroundColor: '#34C759', paddingHorizontal: 20, paddingVertical: 15, borderRadius: 25, minWidth: 100, alignItems: 'center' },
+  captureButtonText: { color: 'white', fontSize: 12, fontWeight: '600' },
+  autoButton: { backgroundColor: '#34C759', paddingHorizontal: 20, paddingVertical: 15, borderRadius: 25, minWidth: 90, alignItems: 'center' },
   autoButtonActive: { backgroundColor: '#FF9500' },
-  autoButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  autoButtonText: { color: 'white', fontSize: 12, fontWeight: '600' },
+  galleryButton: { backgroundColor: '#007AFF', paddingHorizontal: 15, paddingVertical: 15, borderRadius: 25, minWidth: 100, alignItems: 'center' },
+  galleryButtonText: { color: 'white', fontSize: 11, fontWeight: '600' },
   nextCaptureText: { color: 'white', fontSize: 12, textAlign: 'center', marginTop: 8, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
   autoModeIndicator: { position: 'absolute', top: 200, left: 20, right: 20, backgroundColor: 'rgba(52, 199, 89, 0.9)', padding: 12, borderRadius: 8, alignItems: 'center', zIndex: 1 },
   autoModeText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
@@ -604,4 +784,25 @@ const styles = StyleSheet.create({
   photoThumbnail: { width: '100%', aspectRatio: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 4 },
   photoTimestamp: { color: '#ccc', fontSize: 6, textAlign: 'center', marginTop: 2 },
   photoDescription: { color: '#ccc', fontSize: 6, textAlign: 'center', lineHeight: 8 },
+  
+  // Gallery styles
+  galleryContainer: { flex: 1, backgroundColor: '#000' },
+  galleryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingTop: 50, backgroundColor: 'rgba(0,0,0,0.9)' },
+  galleryTitle: { color: 'white', fontSize: 18, fontWeight: '600' },
+  deleteButton: { backgroundColor: '#FF3B30', padding: 10, borderRadius: 20, minWidth: 40, alignItems: 'center' },
+  deleteButtonText: { fontSize: 16 },
+  photoContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', position: 'relative' },
+  fullPhoto: { width: '100%', height: '100%' },
+  navButton: { position: 'absolute', top: '50%', backgroundColor: 'rgba(0,0,0,0.7)', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginTop: -25 },
+  prevButton: { left: 20 },
+  nextButton: { right: 20 },
+  navButtonText: { color: 'white', fontSize: 24, fontWeight: 'bold' },
+  photoInfo: { backgroundColor: 'rgba(0,0,0,0.8)', padding: 15, alignItems: 'center' },
+  photoTimestamp: { color: 'white', fontSize: 14, marginBottom: 5 },
+  photoDetails: { color: '#ccc', fontSize: 12, marginBottom: 2 },
+  thumbnailStrip: { backgroundColor: 'rgba(0,0,0,0.9)', maxHeight: 80 },
+  thumbnailContent: { padding: 10, alignItems: 'center' },
+  thumbnailButton: { marginHorizontal: 5, borderRadius: 8, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent' },
+  activeThumbnail: { borderColor: '#007AFF' },
+  thumbnailImage: { width: 60, height: 80, borderRadius: 6 },
 });
