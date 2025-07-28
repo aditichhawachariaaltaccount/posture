@@ -12,15 +12,18 @@
     "reset": "expo start --reset-cache"
   },
   "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/pose": "^0.5.1675469404",
     "expo": "~53.0.20",
-    "expo-status-bar": "~2.2.3",
-    "react": "19.0.0",
-    "react-native": "0.79.5",
-    "expo-camera": "~16.1.11",
-    "expo-media-library": "~17.1.7",
-    "expo-video-thumbnails": "~9.1.3",
     "expo-av": "~15.1.7",
-    "expo-image-manipulator": "~13.1.7"
+    "expo-camera": "~16.1.11",
+    "expo-file-system": "^18.1.11",
+    "expo-image-manipulator": "~13.1.7",
+    "expo-media-library": "~17.1.7",
+    "expo-status-bar": "~2.2.3",
+    "expo-video-thumbnails": "~9.1.3",
+    "react": "19.0.0",
+    "react-native": "0.79.5"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0"
